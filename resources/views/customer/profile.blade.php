@@ -14,7 +14,6 @@
 
 <div class="max-w-5xl mx-auto min-h-screen bg-white flex flex-col shadow-xl">
 
-
     <main class="flex-1 px-4 pt-8 pb-32">
 
         @auth
@@ -94,13 +93,21 @@
             <div class="space-y-4">
                 <div class="flex items-center justify-between px-1">
                     <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest">Riwayat Pesanan</h3>
-                    <a href="#" class="text-[10px] font-bold text-red-500 uppercase hover:underline">Lihat Semua</a>
+                    
+                    <!-- HANYA TAMPILKAN TOMBOL JIKA PESANAN LEBIH DARI 5 -->
+                    @if($orders->count() > 5)
+                        <button type="button" id="toggle-history-btn" class="text-[10px] font-bold text-red-500 uppercase hover:underline focus:outline-none">
+                            Lihat Semua
+                        </button>
+                    @endif
                 </div>
 
                 @if($orders->count() > 0)
                     <div class="space-y-3">
-                        @foreach($orders as $order)
-                            <a href="{{ route('customer.order.show', $order->id) }}" class="block bg-white border border-gray-100 rounded-3xl p-4 hover:shadow-lg hover:border-gray-200 transition cursor-pointer">
+                        <!-- TAMBAHKAN INDEX LOOPING -->
+                        @foreach($orders as $index => $order)
+                            <!-- TAMBAHKAN CLASS hidden JIKA INDEX >= 5 DAN CLASS order-item UNTUK TARGET JS -->
+                            <a href="{{ route('customer.order.show', $order->id) }}" class="order-item block bg-white border border-gray-100 rounded-3xl p-4 hover:shadow-lg hover:border-gray-200 transition cursor-pointer {{ $index >= 5 ? 'hidden' : '' }}">
                                 <div class="flex justify-between items-start mb-3">
                                     <div>
                                         <p class="text-[10px] font-bold text-gray-400 uppercase tracking-tight mb-0.5">{{ $order->order_number }}</p>
@@ -193,6 +200,35 @@
     @include('layout.bottomnav')
 
 </div>
+
+<!-- SCRIPT UNTUK TOGGLE HISTORY PESANAN -->
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const toggleBtn = document.getElementById('toggle-history-btn');
+        const orderItems = document.querySelectorAll('.order-item');
+        let isExpanded = false;
+
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', function() {
+                isExpanded = !isExpanded;
+                
+                orderItems.forEach((item, index) => {
+                    // Index 0 sampai 4 (5 item pertama) selalu tampil
+                    if (index >= 5) {
+                        if (isExpanded) {
+                            item.classList.remove('hidden');
+                        } else {
+                            item.classList.add('hidden');
+                        }
+                    }
+                });
+
+                // Ubah teks tombol
+                toggleBtn.textContent = isExpanded ? 'Tampilkan Lebih Sedikit' : 'Lihat Semua';
+            });
+        }
+    });
+</script>
 
 </body>
 </html>

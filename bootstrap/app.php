@@ -11,11 +11,19 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // 1. Registrasi Web Middleware bawaan Anda
         $middleware->web(append: [
             \App\Http\Middleware\PreventBackHistory::class,
         ]);
+
+        // 2. Registrasi Alias Role Middleware Anda
         $middleware->alias([
             'role' => \App\Http\Middleware\RoleMiddleware::class,
+        ]);
+
+        // 3. PENGECUALIAN CSRF TOKEN UNTUK CALLBACK MIDTRANS (Sudah digabung dengan benar)
+        $middleware->validateCsrfTokens(except: [
+            '/midtrans/callback'
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

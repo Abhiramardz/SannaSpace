@@ -9,9 +9,9 @@ class KasirController extends Controller
 {
     public function index()
     {
-        // Ambil pesanan yang belum diselesaikan atau dibatalkan
+        // Ambil pesanan yang belum diselesaikan, dibatalkan, atau belum dibayar (Midtrans)
         $orders = Order::with('user', 'items.product')
-                       ->whereNotIn('status', ['completed', 'cancelled'])
+                       ->whereNotIn('status', ['completed', 'cancelled', 'unpaid'])
                        ->orderBy('created_at', 'asc')
                        ->get();
 

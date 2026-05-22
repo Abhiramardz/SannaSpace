@@ -8,9 +8,21 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
+// IMPORT CLASS SDK MIDTRANS
+use Midtrans\Config;
+use Midtrans\Snap;
 
 class CartController extends Controller
 {
+    public function __construct()
+    {
+        // INISIALISASI KONFIGURASI KUNCI MIDTRANS SANDBOX
+        Config::$serverKey = env('MIDTRANS_SERVER_KEY');
+        Config::$isProduction = env('MIDTRANS_IS_PRODUCTION', false);
+        Config::$isSanitized = true;
+        Config::$is3ds = true;
+    }
+
     public function index()
     {
         $cart = session()->get('cart', []);
@@ -167,7 +179,7 @@ class CartController extends Controller
         });
     }
 
-    // 1. Menampilkan Halaman Pilihan Pembayaran
+    // 1. Menampilkan Halaman Pilihan Pembayaran (Tetap Aman)
     public function checkoutPage()
     {
         if (!Auth::check()) {
@@ -187,15 +199,14 @@ class CartController extends Controller
             return $carry + ($price * $quantity);
         }, 0);
 
-        // Mengarah ke folder aktual sesuai image_3f83f5.png
         return view('customer.pembayaran.detailpembayaran', compact('cart', 'total'));
     }
 
-    // 2. Memproses Transaksi Final (Membuat Order & Potong Stok)
+    // 2. Memproses Transaksi Final (Fokus Perubahan: Data Masuk DB Kasir Saat QRIS Sukses)
     public function prosesCheckout(Request $request)
     {
         if (!Auth::check()) {
-            return redirect('/login')->with('error', 'Silakan login terlebih dahulu.');
+            return response()->json(['error' => 'Silakan login terlebih dahulu.'], 401);
         }
 
         $request->validate([
@@ -207,50 +218,157 @@ class CartController extends Controller
         $cart = session()->get('cart', []);
 
         if (empty($cart)) {
-            return redirect('/pesanan')->with('error', 'Keranjang Anda kosong.');
+            return response()->json(['error' => 'Keranjang Anda kosong.'], 400);
         }
 
         // Validasi ketersediaan stok produk
         foreach ($cart as $productId => $details) {
             $product = \App\Models\Product::find($productId);
             if (!$product || $product->stock < $details['quantity']) {
-                return redirect('/pesanan')->with('error', 'Maaf, stok ' . ($product->name ?? 'produk') . ' tidak mencukupi.');
+                return response()->json(['error' => 'Maaf, stok ' . ($product->name ?? 'produk') . ' tidak mencukupi.'], 400);
             }
         }
 
-        return \DB::transaction(function() use ($cart, $request) {
-            $total = array_reduce($cart, function($carry, $item) {
-                $price = $item['price'] ?? 0;
-                $quantity = $item['quantity'] ?? 0;
-                return $carry + ($price * $quantity);
-            }, 0);
+        $total = array_reduce($cart, function($carry, $item) {
+            $price = $item['price'] ?? 0;
+            $quantity = $item['quantity'] ?? 0;
+            return $carry + ($price * $quantity);
+        }, 0);
 
-            // Membuat data Order di Database
-            $order = Order::create([
+        // -------------------------------------------------------------------------
+        // ALUR PILIHAN KESATU: Jika memilih Cash / Bayar di Kasir (Tetap Langsung Masuk DB)
+        // -------------------------------------------------------------------------
+        if ($request->payment_method === 'Cash') {
+            $order = \DB::transaction(function() use ($cart, $total) {
+                // Membuat data Order di Database
+                $newOrder = Order::create([
+                    'user_id' => Auth::id(),
+                    'order_number' => 'ORD-' . strtoupper(Str::random(10)),
+                    'total_amount' => $total,
+                    'status' => 'pending',
+                    'payment_method' => 'Cash',
+                ]);
+
+                foreach ($cart as $productId => $details) {
+                    OrderItem::create([
+                        'order_id' => $newOrder->id,
+                        'product_id' => $productId,
+                        'quantity' => $details['quantity'],
+                        'price' => $details['price'],
+                    ]);
+
+                    $product = \App\Models\Product::find($productId);
+                    $product->decrement('stock', $details['quantity']);
+                }
+                return $newOrder;
+        });
+
+            session()->forget('cart');
+            return response()->json([
+                'success' => true,
+                'redirect_url' => route('profile'),
+                'message' => 'Pesanan Cash berhasil dibuat!'
+            ]);
+        }
+
+        // -------------------------------------------------------------------------
+        // ALUR PILIHAN KEDUA: Jika memilih QRIS (Masuk DB dengan status unpaid)
+        // -------------------------------------------------------------------------
+        $orderNumber = 'ORD-' . strtoupper(Str::random(10));
+
+        $order = \DB::transaction(function() use ($cart, $total, $orderNumber) {
+            $newOrder = Order::create([
                 'user_id' => Auth::id(),
-                'order_number' => 'ORD-' . strtoupper(Str::random(10)),
+                'order_number' => $orderNumber,
                 'total_amount' => $total,
-                'status' => 'pending',
-                'payment_method' => $request->payment_method,
+                'status' => 'unpaid', // Status khusus untuk pesanan Midtrans yang belum dibayar
+                'payment_method' => 'QRIS', // <--- MEMASTIKAN STATUS METODE BAYAR TERCATAT
             ]);
 
-            // Membuat Order Items dan Mengurangi Stok Produk
             foreach ($cart as $productId => $details) {
                 OrderItem::create([
-                    'order_id' => $order->id,
+                    'order_id' => $newOrder->id,
                     'product_id' => $productId,
                     'quantity' => $details['quantity'],
                     'price' => $details['price'],
                 ]);
 
+                // Potong stok agar tidak bisa dibeli pelanggan lain selama menunggu pembayaran
                 $product = \App\Models\Product::find($productId);
-                $product->decrement('stock', $details['quantity']);
+                if ($product) {
+                    $product->decrement('stock', $details['quantity']);
+                }
             }
+            return $newOrder;
+        });
+        
+        $itemDetails = [];
+        foreach ($cart as $productId => $details) {
+            $itemDetails[] = [
+                'id' => (string) $productId,
+                'price' => (int) ($details['price'] ?? 0),
+                'quantity' => (int) ($details['quantity'] ?? 0),
+                'name' => (string) substr(($details['name'] ?? 'Menu'), 0, 50),
+            ];
+        }
 
-            // Kosongkan keranjang session
+        $params = [
+            'transaction_details' => [
+                'order_id' => $orderNumber,
+                'gross_amount' => (int) $total,
+            ],
+            'customer_details' => [
+                'first_name' => Auth::user()->name,
+                'email' => Auth::user()->email,
+            ],
+            'item_details' => $itemDetails,
+            'enabled_payments' => ['qris', 'gopay', 'shopeepay'] // <--- KUNCI PEMBATASAN QRIS
+        ];
+
+        try {
+            $snapToken = Snap::getSnapToken($params);
+            
+            // Bersihkan isi keranjang belanja
             session()->forget('cart');
 
-            return redirect()->route('profile')->with('success', 'Pesanan berhasil dibuat menggunakan metode ' . $request->payment_method . '!');
-        });
+            return response()->json([
+                'success' => true,
+                'snap_token' => $snapToken
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Gagal menghubungi server Midtrans: ' . $e->getMessage()], 500);
+        }
+    }
+
+    // 3. Webhook Callback Otomatis (Mengubah status transaksi menjadi valid)
+    public function callback(Request $request)
+    {
+        $serverKey = env('MIDTRANS_SERVER_KEY');
+        $hashed = hash("sha512", $request->order_id . $request->status_code . $request->gross_amount . $serverKey);
+
+        if ($hashed === $request->signature_key) {
+            $transactionStatus = $request->transaction_status;
+            
+            $existingOrder = Order::with('items')->where('order_number', $request->order_id)->first();
+            
+            if ($existingOrder) {
+                if ($transactionStatus == 'capture' || $transactionStatus == 'settlement') {
+                    // Update status ke pending agar pesanan ini muncul di dashboard Kasir
+                    $existingOrder->update(['status' => 'pending']);
+                } elseif ($transactionStatus == 'cancel' || $transactionStatus == 'deny' || $transactionStatus == 'expire') {
+                    // Batalkan pesanan dan kembalikan stok
+                    if ($existingOrder->status != 'cancelled') {
+                        foreach ($existingOrder->items as $item) {
+                            $product = \App\Models\Product::find($item->product_id);
+                            if ($product) {
+                                $product->increment('stock', $item->quantity);
+                            }
+                        }
+                        $existingOrder->update(['status' => 'cancelled']);
+                    }
+                }
+            }
+        }
+        return response()->json(['status' => 'success']);
     }
 }

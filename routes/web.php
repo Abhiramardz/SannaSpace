@@ -119,6 +119,8 @@ Route::middleware(['auth', 'role:superadmin'])->group(function () {
 // Customer
 use App\Http\Controllers\CartController;
 
+Route::post('/midtrans/callback', [CartController::class, 'callback'])->name('midtrans.callback');
+
 Route::middleware(['role:customer'])->group(function () {
     Route::get('/pesanan', [CartController::class, 'index'])->name('pesanan.index');
     Route::post('/cart/add', [CartController::class, 'add'])->name('cart.add');

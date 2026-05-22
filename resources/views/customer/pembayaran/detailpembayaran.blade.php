@@ -6,6 +6,9 @@
     <title>Pilih Metode Pembayaran - Sanna Space</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <script type="text/javascript" src="https://app.sandbox.midtrans.com/snap/snap.js" data-client-key="{{ env('MIDTRANS_CLIENT_KEY') }}"></script>
+    
     <style>
         * { font-family: 'Inter', sans-serif; }
     </style>
@@ -40,7 +43,7 @@
         </div>
 
         {{-- Form Pemilihan Pembayaran Final --}}
-        <form action="{{ route('checkout.proses') }}" method="POST" class="space-y-8">
+        <form id="payment-form" class="space-y-8">
             @csrf
             
             <div>
@@ -70,7 +73,7 @@
                             </div>
                             <div>
                                 <span class="block text-sm font-bold text-gray-800">QRIS Mandiri / Dana</span>
-                                <span class="block text-xs text-gray-400 mt-0.5">Scan barcode otomatis instan</span>
+                                <span class="block text-xs text-gray-400 mt-0.5">Scan barcode otomatis instan via Midtrans</span>
                             </div>
                         </div>
                         <input type="radio" name="payment_method" value="QRIS" class="w-4 h-4 text-red-500 focus:ring-red-500 border-gray-300">
@@ -84,7 +87,7 @@
                     <span class="text-2xl font-black text-gray-800">Rp {{ number_format($total, 0, ',', '.') }}</span>
                 </div>
                 
-                <button type="submit" class="w-full bg-red-500 text-white font-bold py-4 rounded-2xl shadow-lg shadow-red-200 hover:bg-red-600 transition active:scale-[0.98]">
+                <button type="submit" id="submit-btn" class="w-full bg-red-500 text-white font-bold py-4 rounded-2xl shadow-lg shadow-red-200 hover:bg-red-600 transition active:scale-[0.98]">
                     Konfirmasi & Selesaikan Pesanan
                 </button>
             </div>
@@ -93,6 +96,66 @@
 
     @include('layout.bottomnav')
 </div>
+
+{{-- INTEGRASI JAVASCRIPT AJAX & SNAP INTERACTIVE --}}
+<script>
+    document.getElementById('payment-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const submitBtn = document.getElementById('submit-btn');
+        const selectedMethod = document.querySelector('input[name="payment_method"]:checked').value;
+        
+        submitBtn.innerHTML = "Memproses Transaksi...";
+        submitBtn.disabled = true;
+
+        fetch("{{ route('checkout.proses') }}", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-TOKEN": "{{ csrf_token() }}"
+            },
+            body: JSON.stringify({ payment_method: selectedMethod })
+        })
+        .then(response => response.json())
+        .then(data => {
+            submitBtn.innerHTML = "Konfirmasi & Selesaikan Pesanan";
+            submitBtn.disabled = false;
+
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+
+            // Kondisi 1: Jika memilih Cash (Direct Redirect ke halaman Profile)
+            if (selectedMethod === 'Cash' && data.redirect_url) {
+                window.location.href = data.redirect_url;
+            } 
+            
+            // Kondisi 2: Jika memilih QRIS (Memicu Kotak Pop-up Snap Midtrans)
+            else if (selectedMethod === 'QRIS' && data.snap_token) {
+                snap.pay(data.snap_token, {
+                    onSuccess: function (result) {
+                        window.location.href = "{{ route('profile') }}?status=success";
+                    },
+                    onPending: function (result) {
+                        window.location.href = "{{ route('profile') }}?status=pending";
+                    },
+                    onError: function (result) {
+                        alert("Pembayaran online gagal diproses.");
+                    },
+                    onClose: function () {
+                        alert('Anda menutup jendela pembayaran sebelum transaksi selesai.');
+                    }
+                });
+            }
+        })
+        .catch(error => {
+            console.error("Error:", error);
+            submitBtn.innerHTML = "Konfirmasi & Selesaikan Pesanan";
+            submitBtn.disabled = false;
+        });
+    });
+</script>
 
 </body>
 </html>
