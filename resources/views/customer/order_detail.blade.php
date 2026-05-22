@@ -30,6 +30,7 @@
         <div class="bg-gray-50 rounded-[24px] p-6 mb-6 flex flex-col items-center text-center border border-gray-100">
             @php
                 $statusConfig = [
+                    'unpaid' => ['label' => 'Belum Dibayar', 'desc' => 'Silakan selesaikan pembayaran QRIS Anda.', 'icon' => 'credit-card', 'color' => 'text-orange-500', 'bg' => 'bg-orange-100'],
                     'pending' => ['label' => 'Menunggu Diproses', 'desc' => 'Pesanan Anda sudah masuk dan sedang menunggu konfirmasi kasir.', 'icon' => 'clock', 'color' => 'text-yellow-500', 'bg' => 'bg-yellow-100'],
                     'diproses' => ['label' => 'Sedang Diproses', 'desc' => 'Kasir sedang memproses dan menyiapkan pesanan Anda.', 'icon' => 'loader', 'color' => 'text-blue-500', 'bg' => 'bg-blue-100'],
                     'siap_saji' => ['label' => 'Siap Diambil', 'desc' => 'Pesanan Anda sudah siap! Silakan ambil di konter pengambilan.', 'icon' => 'coffee', 'color' => 'text-purple-500', 'bg' => 'bg-purple-100'],

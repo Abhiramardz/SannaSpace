@@ -21,9 +21,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => \App\Http\Middleware\RoleMiddleware::class,
         ]);
 
-        // 3. PENGECUALIAN CSRF TOKEN UNTUK CALLBACK MIDTRANS (Sudah digabung dengan benar)
+        // 3. PENGECUALIAN CSRF TOKEN UNTUK CALLBACK XENDIT
         $middleware->validateCsrfTokens(except: [
-            '/midtrans/callback'
+            '/xendit/callback'
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

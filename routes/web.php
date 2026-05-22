@@ -118,8 +118,9 @@ Route::middleware(['auth', 'role:superadmin'])->group(function () {
 
 // Customer
 use App\Http\Controllers\CartController;
+use App\Http\Controllers\WebhookController;
 
-Route::post('/midtrans/callback', [CartController::class, 'callback'])->name('midtrans.callback');
+Route::post('/xendit/callback', [WebhookController::class, 'handleXenditCallback'])->name('xendit.callback');
 
 Route::middleware(['role:customer'])->group(function () {
     Route::get('/pesanan', [CartController::class, 'index'])->name('pesanan.index');
@@ -131,7 +132,6 @@ Route::middleware(['role:customer'])->group(function () {
     // Pembayaran
     Route::get('/checkout', [CartController::class, 'checkoutPage'])->name('checkout.page');
     Route::post('/checkout/proses', [CartController::class, 'prosesCheckout'])->name('checkout.proses');
-
 });
 
 use App\Http\Controllers\ProfileController;

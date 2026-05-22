@@ -7,7 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     
-    <script type="text/javascript" src="https://app.sandbox.midtrans.com/snap/snap.js" data-client-key="{{ env('MIDTRANS_CLIENT_KEY') }}"></script>
+    <!-- SCRIPT MIDTRANS DIHAPUS DARI SINI -->
     
     <style>
         * { font-family: 'Inter', sans-serif; }
@@ -73,7 +73,7 @@
                             </div>
                             <div>
                                 <span class="block text-sm font-bold text-gray-800">QRIS Mandiri / Dana</span>
-                                <span class="block text-xs text-gray-400 mt-0.5">Scan barcode otomatis instan via Midtrans</span>
+                                <span class="block text-xs text-gray-400 mt-0.5">Scan barcode otomatis instan via Xendit</span> <!-- Teks disesuaikan -->
                             </div>
                         </div>
                         <input type="radio" name="payment_method" value="QRIS" class="w-4 h-4 text-red-500 focus:ring-red-500 border-gray-300">
@@ -97,7 +97,7 @@
     @include('layout.bottomnav')
 </div>
 
-{{-- INTEGRASI JAVASCRIPT AJAX & SNAP INTERACTIVE --}}
+{{-- INTEGRASI JAVASCRIPT AJAX UNTUK XENDIT --}}
 <script>
     document.getElementById('payment-form').addEventListener('submit', function(e) {
         e.preventDefault();
@@ -126,27 +126,10 @@
                 return;
             }
 
-            // Kondisi 1: Jika memilih Cash (Direct Redirect ke halaman Profile)
-            if (selectedMethod === 'Cash' && data.redirect_url) {
+            // Karena backend Xendit dan Cash sama-sama mengembalikan redirect_url,
+            // kita cukup mengarahkan user ke URL tersebut.
+            if (data.redirect_url) {
                 window.location.href = data.redirect_url;
-            } 
-            
-            // Kondisi 2: Jika memilih QRIS (Memicu Kotak Pop-up Snap Midtrans)
-            else if (selectedMethod === 'QRIS' && data.snap_token) {
-                snap.pay(data.snap_token, {
-                    onSuccess: function (result) {
-                        window.location.href = "{{ route('profile') }}?status=success";
-                    },
-                    onPending: function (result) {
-                        window.location.href = "{{ route('profile') }}?status=pending";
-                    },
-                    onError: function (result) {
-                        alert("Pembayaran online gagal diproses.");
-                    },
-                    onClose: function () {
-                        alert('Anda menutup jendela pembayaran sebelum transaksi selesai.');
-                    }
-                });
             }
         })
         .catch(error => {

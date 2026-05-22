@@ -8,20 +8,11 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
-// IMPORT CLASS SDK MIDTRANS
-use Midtrans\Config;
-use Midtrans\Snap;
+use Illuminate\Support\Facades\Http; // IMPORT HTTP CLIENT UNTUK XENDIT
 
 class CartController extends Controller
 {
-    public function __construct()
-    {
-        // INISIALISASI KONFIGURASI KUNCI MIDTRANS SANDBOX
-        Config::$serverKey = env('MIDTRANS_SERVER_KEY');
-        Config::$isProduction = env('MIDTRANS_IS_PRODUCTION', false);
-        Config::$isSanitized = true;
-        Config::$is3ds = true;
-    }
+    // Konstruktor Midtrans dihapus karena Xendit menggunakan HTTP Header secara langsung
 
     public function index()
     {
@@ -124,6 +115,7 @@ class CartController extends Controller
 
     public function checkout(Request $request)
     {
+        // ... (Kode checkout standar tidak ada yang berubah)
         if (!Auth::check()) {
             return redirect()->route('login')->with('error', 'Silakan login terlebih dahulu untuk melakukan pemesanan.');
         }
@@ -134,7 +126,6 @@ class CartController extends Controller
             return redirect()->back()->with('error', 'Keranjang Anda kosong.');
         }
 
-        // Validate stock for all items first
         foreach ($cart as $productId => $details) {
             $product = Product::find($productId);
             if (!$product || $product->stock < $details['quantity']) {
@@ -149,7 +140,6 @@ class CartController extends Controller
                 return $carry + ($price * $quantity);
             }, 0);
 
-            // Create Order
             $order = Order::create([
                 'user_id' => Auth::id(),
                 'order_number' => 'ORD-' . strtoupper(Str::random(10)),
@@ -158,7 +148,6 @@ class CartController extends Controller
                 'payment_method' => 'Cash',
             ]);
 
-            // Create Order Items and Update Stock
             foreach ($cart as $productId => $details) {
                 OrderItem::create([
                     'order_id' => $order->id,
@@ -167,19 +156,16 @@ class CartController extends Controller
                     'price' => $details['price'],
                 ]);
 
-                // Decrement Stock
                 $product = Product::find($productId);
                 $product->decrement('stock', $details['quantity']);
             }
 
-            // Clear Cart
             session()->forget('cart');
 
             return redirect()->route('profile')->with('success', 'Pesanan berhasil dibuat dan stok telah diperbarui!');
         });
     }
 
-    // 1. Menampilkan Halaman Pilihan Pembayaran (Tetap Aman)
     public function checkoutPage()
     {
         if (!Auth::check()) {
@@ -192,7 +178,6 @@ class CartController extends Controller
             return redirect('/pesanan')->with('error', 'Keranjang Anda kosong.');
         }
 
-        // Hitung total belanjaan
         $total = array_reduce($cart, function($carry, $item) {
             $price = $item['price'] ?? 0;
             $quantity = $item['quantity'] ?? 0;
@@ -202,7 +187,6 @@ class CartController extends Controller
         return view('customer.pembayaran.detailpembayaran', compact('cart', 'total'));
     }
 
-    // 2. Memproses Transaksi Final (Fokus Perubahan: Data Masuk DB Kasir Saat QRIS Sukses)
     public function prosesCheckout(Request $request)
     {
         if (!Auth::check()) {
@@ -221,7 +205,6 @@ class CartController extends Controller
             return response()->json(['error' => 'Keranjang Anda kosong.'], 400);
         }
 
-        // Validasi ketersediaan stok produk
         foreach ($cart as $productId => $details) {
             $product = \App\Models\Product::find($productId);
             if (!$product || $product->stock < $details['quantity']) {
@@ -235,12 +218,9 @@ class CartController extends Controller
             return $carry + ($price * $quantity);
         }, 0);
 
-        // -------------------------------------------------------------------------
-        // ALUR PILIHAN KESATU: Jika memilih Cash / Bayar di Kasir (Tetap Langsung Masuk DB)
-        // -------------------------------------------------------------------------
+        // ALUR CASH
         if ($request->payment_method === 'Cash') {
             $order = \DB::transaction(function() use ($cart, $total) {
-                // Membuat data Order di Database
                 $newOrder = Order::create([
                     'user_id' => Auth::id(),
                     'order_number' => 'ORD-' . strtoupper(Str::random(10)),
@@ -261,7 +241,7 @@ class CartController extends Controller
                     $product->decrement('stock', $details['quantity']);
                 }
                 return $newOrder;
-        });
+            });
 
             session()->forget('cart');
             return response()->json([
@@ -271,9 +251,7 @@ class CartController extends Controller
             ]);
         }
 
-        // -------------------------------------------------------------------------
-        // ALUR PILIHAN KEDUA: Jika memilih QRIS (Masuk DB dengan status unpaid)
-        // -------------------------------------------------------------------------
+        // ALUR QRIS (VIA XENDIT)
         $orderNumber = 'ORD-' . strtoupper(Str::random(10));
 
         $order = \DB::transaction(function() use ($cart, $total, $orderNumber) {
@@ -281,8 +259,8 @@ class CartController extends Controller
                 'user_id' => Auth::id(),
                 'order_number' => $orderNumber,
                 'total_amount' => $total,
-                'status' => 'unpaid', // Status khusus untuk pesanan Midtrans yang belum dibayar
-                'payment_method' => 'QRIS', // <--- MEMASTIKAN STATUS METODE BAYAR TERCATAT
+                'status' => 'unpaid',
+                'payment_method' => 'QRIS',
             ]);
 
             foreach ($cart as $productId => $details) {
@@ -293,7 +271,6 @@ class CartController extends Controller
                     'price' => $details['price'],
                 ]);
 
-                // Potong stok agar tidak bisa dibeli pelanggan lain selama menunggu pembayaran
                 $product = \App\Models\Product::find($productId);
                 if ($product) {
                     $product->decrement('stock', $details['quantity']);
@@ -301,74 +278,71 @@ class CartController extends Controller
             }
             return $newOrder;
         });
-        
-        $itemDetails = [];
-        foreach ($cart as $productId => $details) {
-            $itemDetails[] = [
-                'id' => (string) $productId,
-                'price' => (int) ($details['price'] ?? 0),
-                'quantity' => (int) ($details['quantity'] ?? 0),
-                'name' => (string) substr(($details['name'] ?? 'Menu'), 0, 50),
-            ];
-        }
 
-        $params = [
-            'transaction_details' => [
-                'order_id' => $orderNumber,
-                'gross_amount' => (int) $total,
-            ],
-            'customer_details' => [
-                'first_name' => Auth::user()->name,
-                'email' => Auth::user()->email,
-            ],
-            'item_details' => $itemDetails,
-            'enabled_payments' => ['qris', 'gopay', 'shopeepay'] // <--- KUNCI PEMBATASAN QRIS
-        ];
+        // Request Invoice ke Xendit
+        $response = Http::withBasicAuth(env('XENDIT_SECRET_KEY'), '')
+            ->post('https://api.xendit.co/v2/invoices', [
+                'external_id' => $orderNumber,
+                'amount' => $total,
+                'payer_email' => Auth::user()->email,
+                'description' => 'Pesanan Sanna Space ' . $orderNumber,
+                'success_redirect_url' => route('profile'), // Redirect ke profile jika sukses bayar
+                'payment_methods' => ['QRIS'], // Kunci agar pelanggan hanya bisa bayar pakai QRIS
+                'customer' => [
+                    'given_names' => Auth::user()->name,
+                    'email' => Auth::user()->email,
+                ]
+            ]);
 
-        try {
-            $snapToken = Snap::getSnapToken($params);
-            
-            // Bersihkan isi keranjang belanja
+        if ($response->successful()) {
+            $invoice = $response->json();
             session()->forget('cart');
 
+            // Kembalikan URL Invoice Xendit ke frontend
             return response()->json([
                 'success' => true,
-                'snap_token' => $snapToken
+                'redirect_url' => $invoice['invoice_url'] 
             ]);
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Gagal menghubungi server Midtrans: ' . $e->getMessage()], 500);
+        } else {
+            return response()->json(['error' => 'Gagal menghubungi server pembayaran Xendit.'], 500);
         }
     }
 
-    // 3. Webhook Callback Otomatis (Mengubah status transaksi menjadi valid)
+    // 3. Webhook Callback Otomatis (Xendit)
     public function callback(Request $request)
     {
-        $serverKey = env('MIDTRANS_SERVER_KEY');
-        $hashed = hash("sha512", $request->order_id . $request->status_code . $request->gross_amount . $serverKey);
+        $xenditToken = env('XENDIT_WEBHOOK_TOKEN');
+        $callbackToken = $request->header('x-callback-token');
 
-        if ($hashed === $request->signature_key) {
-            $transactionStatus = $request->transaction_status;
-            
-            $existingOrder = Order::with('items')->where('order_number', $request->order_id)->first();
-            
-            if ($existingOrder) {
-                if ($transactionStatus == 'capture' || $transactionStatus == 'settlement') {
-                    // Update status ke pending agar pesanan ini muncul di dashboard Kasir
-                    $existingOrder->update(['status' => 'pending']);
-                } elseif ($transactionStatus == 'cancel' || $transactionStatus == 'deny' || $transactionStatus == 'expire') {
-                    // Batalkan pesanan dan kembalikan stok
-                    if ($existingOrder->status != 'cancelled') {
-                        foreach ($existingOrder->items as $item) {
-                            $product = \App\Models\Product::find($item->product_id);
-                            if ($product) {
-                                $product->increment('stock', $item->quantity);
-                            }
+        // Validasi Token Keamanan dari Xendit
+        if ($callbackToken !== $xenditToken) {
+            return response()->json(['message' => 'Token tidak valid'], 403);
+        }
+
+        $externalId = $request->input('external_id');
+        $status = $request->input('status');
+        
+        $existingOrder = Order::with('items')->where('order_number', $externalId)->first();
+        
+        if ($existingOrder) {
+            if ($status === 'PAID' || $status === 'SETTLED') {
+                // Update status ke pending agar pesanan ini muncul di dashboard Kasir
+                $existingOrder->update(['status' => 'pending']);
+            } 
+            elseif ($status === 'EXPIRED') {
+                // Batalkan pesanan dan kembalikan stok jika tidak dibayar
+                if ($existingOrder->status != 'cancelled') {
+                    foreach ($existingOrder->items as $item) {
+                        $product = \App\Models\Product::find($item->product_id);
+                        if ($product) {
+                            $product->increment('stock', $item->quantity);
                         }
-                        $existingOrder->update(['status' => 'cancelled']);
                     }
+                    $existingOrder->update(['status' => 'cancelled']);
                 }
             }
         }
+        
         return response()->json(['status' => 'success']);
     }
 }

@@ -45,6 +45,48 @@ class ProfileController extends Controller
                     ->where('user_id', $user->id)
                     ->firstOrFail();
 
+        // Real-time sync dengan Xendit jika status masih 'unpaid' dan menggunakan QRIS
+        if ($order->status === 'unpaid' && $order->payment_method === 'QRIS') {
+            try {
+                $response = \Illuminate\Support\Facades\Http::withBasicAuth(env('XENDIT_SECRET_KEY'), '')
+                    ->get('https://api.xendit.co/v2/invoices', [
+                        'external_id' => $order->order_number
+                    ]);
+
+                if ($response->successful()) {
+                    $invoices = $response->json();
+                    if (!empty($invoices)) {
+                        $invoice = $invoices[0];
+                        $status = $invoice['status'] ?? '';
+
+                        if ($status === 'PAID' || $status === 'SETTLED') {
+                            $order->update([
+                                'status' => 'pending'
+                            ]);
+                            $order->refresh();
+                            \Illuminate\Support\Facades\Log::info("Realtime Sync: Pesanan {$order->order_number} telah dibayar (PAID/SETTLED). Status diperbarui ke pending.");
+                        } elseif ($status === 'EXPIRED') {
+                            \Illuminate\Support\Facades\DB::transaction(function() use ($order) {
+                                foreach ($order->items as $item) {
+                                    $product = \App\Models\Product::find($item->product_id);
+                                    if ($product) {
+                                        $product->increment('stock', $item->quantity);
+                                    }
+                                }
+                                $order->update([
+                                    'status' => 'cancelled'
+                                ]);
+                            });
+                            $order->refresh();
+                            \Illuminate\Support\Facades\Log::info("Realtime Sync: Pesanan {$order->order_number} telah EXPIRED di Xendit. Status diperbarui ke cancelled dan stok dikembalikan.");
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Realtime Sync Xendit Error: ' . $e->getMessage());
+            }
+        }
+
         return view('customer.order_detail', compact('order'));
     }
 }
